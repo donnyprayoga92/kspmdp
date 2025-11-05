@@ -42,7 +42,7 @@ $tanggal_hari_ini = date("Y-m-d");
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <style>
 body { background: #f8f9fa; }
-.table thead { background:#2563eb; color:white; font-size:12px; }
+.table thead { background:#2563eb; color:white; font-size:11px; }
 .nav-tabs .nav-link { font-weight:500; }
 .badge-day { font-size:0.85rem; }
 .btn-wa { background:#25D366; color:#fff; border:none; padding:4px 10px; border-radius:6px; }
@@ -68,7 +68,7 @@ main.container-fluid {
     padding: 15px;
     border-radius: 0 0 8px 8px;
   }
-
+input.form-control-sm { height:28px; font-size:12px; text-align:center; }
 </style>
 </head>
 
@@ -78,24 +78,20 @@ main.container-fluid {
     <h3 class="mb-3"> 📊 Modul Pinjaman</h3>
      
   <?php
-  // ambil tab aktif dari query string (bisa kosong)
   $activeTab = isset($_GET['tab']) ? $_GET['tab'] : '';
   ?>
   <!-- Tabs -->
   <ul class="nav nav-tabs" id="pinjamanTabs" role="tablist">
     <li class="nav-item">
-      <button
-        class="nav-link <?= ($activeTab==='' || $activeTab=='reminder') ? 'active' : '' ?>"
+      <button class="nav-link <?= ($activeTab==='' || $activeTab=='reminder') ? 'active' : '' ?>"
         data-bs-toggle="tab" data-bs-target="#reminder" type="button">Reminder Pinjaman</button>
     </li>
     <li class="nav-item">
-      <button
-        class="nav-link <?= ($activeTab=='update') ? 'active' : '' ?>"
+      <button class="nav-link <?= ($activeTab=='update') ? 'active' : '' ?>"
         data-bs-toggle="tab" data-bs-target="#update" type="button">Update Angsuran ke-</button>
     </li>
     <li class="nav-item">
-      <button
-        class="nav-link <?= ($activeTab=='rekap') ? 'active' : '' ?>"
+      <button class="nav-link <?= ($activeTab=='rekap') ? 'active' : '' ?>"
         data-bs-toggle="tab" data-bs-target="#rekap" type="button">Rekap Angsuran</button>
     </li>
   </ul>
@@ -106,12 +102,34 @@ main.container-fluid {
     <div class="tab-pane fade <?= ($activeTab==='' || $activeTab=='reminder') ? 'show active' : '' ?>" id="reminder">
       <?php
       $sql = "SELECT p.id, a.nama AS nama_anggota, a.nohp AS no_telp, p.nopinjaman, p.tanggal, 
-                     p.plafon, p.nangsuran AS angsuran, p.jangkawaktu, p.rekeningkoran, p.sms
-              FROM pinjaman p
-              JOIN anggota a ON p.anggotaid = a.id
-              ORDER BY p.tanggal ASC";
-      $result = $conn->query($sql);
-      $data_auto = [];
+               p.plafon, p.nangsuran AS angsuran, p.jangkawaktu, p.rekeningkoran, p.sms
+        FROM pinjaman p
+        JOIN anggota a ON p.anggotaid = a.id";
+        $result = $conn->query($sql);
+
+        $data = [];
+        $data_auto = [];
+        if ($result && $result->num_rows > 0) {
+          while($r = $result->fetch_assoc()) {
+              $jt = hitungJatuhTempo($r['tanggal'], $r['rekeningkoran']);
+              $tglReminder = clone $jt; 
+              $tglReminder->modify("-3 day");
+              $r['tglReminder'] = $tglReminder->format('Y-m-d');
+              $r['jatuhTempo'] = $jt->format('Y-m-d');
+
+              if ($jt->format('Y-m-d') == $tanggal_hari_ini && !$r['sms']) {
+                $r['nohp'] = normalize_phone($r['no_telp']);
+                $r['pesan'] = "Salam sejahtera untuk Bapak/Ibu {$r['nama_anggota']},\nAnggota KSP Mitra Dana Persada...";
+                $data_auto[] = $r;
+              }
+
+              $data[] = $r;
+          }
+        }
+
+        usort($data, function($a, $b) {
+            return strtotime($a['tglReminder']) - strtotime($b['tglReminder']);
+        });
       ?>
       <h4 class="mb-3">📋 Reminder Pinjaman</h4>
       <button id="autoSendAll" class="btn btn-success btn-sm mb-2">🚀 Kirim Otomatis ke Semua yang Jatuh Tempo Hari Ini</button>
@@ -126,17 +144,18 @@ main.container-fluid {
             </tr>
           </thead>
           <tbody>
-          <?php $no=1; if ($result && $result->num_rows > 0): while($r = $result->fetch_assoc()):
-              $jt = hitungJatuhTempo($r['tanggal'], $r['rekeningkoran']);
-              $hari_indo = ["Sunday"=>"Minggu","Monday"=>"Senin","Tuesday"=>"Selasa","Wednesday"=>"Rabu","Thursday"=>"Kamis","Friday"=>"Jumat","Saturday"=>"Sabtu"];
+          <?php 
+          $no=1; 
+          if (!empty($data)): 
+            foreach($data as $r):
+              $jt = new DateTime($r['jatuhTempo']);
+              $hari_indo = ["Sunday"=>"Minggu","Monday"=>"Senin","Tuesday"=>"Selasa",
+                            "Wednesday"=>"Rabu","Thursday"=>"Kamis","Friday"=>"Jumat","Saturday"=>"Sabtu"];
               $hariTempo = $hari_indo[$jt->format("l")] ?? $jt->format("l");
-              $tglReminder = clone $jt; $tglReminder->modify("-3 day");
+              $tglReminder = new DateTime($r['tglReminder']);
               $reminder_text = $tglReminder->format("d") . " " . $bulan_indo[$tglReminder->format("m")];
               $nohp = normalize_phone($r['no_telp']);
-              $pesan = "Salam sejahtera untuk Bapak/Ibu {$r['nama_anggota']},\\nAnggota KSP Mitra Dana Persada..."; // ringkas pesan
-              if ($tglReminder->format("Y-m-d")==$tanggal_hari_ini && $r['sms']==0) {
-                  $data_auto[] = ['id'=>$r['id'], 'nohp'=>$nohp, 'pesan'=>$pesan];
-              }
+              $pesan = "Salam sejahtera untuk Bapak/Ibu {$r['nama_anggota']},\nAnggota KSP Mitra Dana Persada...";
           ?>
             <tr>
               <td><?= $no++ ?></td>
@@ -151,58 +170,89 @@ main.container-fluid {
               <td><?= $jt->format('d-M-Y') ?></td>
               <td class="text-center"><?= $hariTempo ?></td>
               <td class="text-center"><?= $reminder_text ?></td>
-              <td class="text-center"><button class="btn-wa btn-sm btn-kirim" data-id="<?= $r['id'] ?>" data-nohp="<?= $nohp ?>" data-pesan="<?= htmlspecialchars($pesan) ?>">Kirim</button></td>
-              <td class="text-center"><span id="status-<?= $r['id'] ?>" class="badge <?= $r['sms']?'bg-success':'bg-secondary' ?>"><?= $r['sms']?'Terkirim':'Belum' ?></span></td>
+              <td class="text-center">
+                <button class="btn-wa btn-sm btn-kirim" 
+                        data-id="<?= $r['id'] ?>" 
+                        data-nohp="<?= $nohp ?>" 
+                        data-pesan="<?= htmlspecialchars($pesan) ?>">Kirim</button>
+              </td>
+              <td class="text-center">
+                <span id="status-<?= $r['id'] ?>" class="badge <?= $r['sms']?'bg-success':'bg-secondary' ?>">
+                  <?= $r['sms']?'Terkirim':'Belum' ?>
+                </span>
+              </td>
+            </tr>
+          <?php 
+            endforeach; 
+          else: 
+          ?>
+            <tr><td colspan="13" class="text-center">Tidak ada data</td></tr>
+          <?php endif; ?>
+          </tbody>
+      </table>
+    </div>
+    </div>
+
+    <!-- TAB 2: UPDATE ANGSURAN -->
+    <div class="tab-pane fade <?= ($activeTab=='update') ? 'show active' : '' ?>" id="update">
+      <h4 class="mb-3">📋 Update Angsuran Ke</h4>
+      <?php
+      $sql_update = "SELECT p.id,a.nama AS nama_anggota,a.nohp AS no_telp,p.nopinjaman,
+                            p.tanggal,p.plafon,p.nangsuran AS angsuran,p.jangkawaktu,p.rekeningkoran
+                     FROM pinjaman p
+                     JOIN anggota a ON p.anggotaid=a.id
+                     ORDER BY p.tanggal ASC";
+      $res_update = $conn->query($sql_update);
+      ?>
+      <div class="table-responsive">
+        <table class="table table-striped table-hover align-middle mb-0">
+          <thead class="text-center">
+            <tr>
+              <th>Nama Anggota</th><th>No. HP</th><th>No. Pinjaman</th><th>Tanggal Pinjaman</th>
+              <th>Plafon</th><th>Angsuran</th><th>Jangka Waktu</th>
+              <th>Pembayaran ke-</th><th>Tgl Jatuh Tempo</th><th>Hari</th><th>Reminder -3</th><th>Aksi</th>
+            </tr>
+          </thead>
+          <tbody>
+          <?php if ($res_update && $res_update->num_rows>0): 
+            while($row=$res_update->fetch_assoc()):
+              $jt=hitungJatuhTempo($row['tanggal'],$row['rekeningkoran']);
+              $hari_indo=["Sunday"=>"Minggu","Monday"=>"Senin","Tuesday"=>"Selasa","Wednesday"=>"Rabu","Thursday"=>"Kamis","Friday"=>"Jumat","Saturday"=>"Sabtu"];
+              $hariTempoIndo=$hari_indo[$jt->format("l")]??$jt->format("l");
+              $tglReminder=clone $jt; $tglReminder->modify("-3 day");
+              $bulan_rem=$bulan_indo[$tglReminder->format("m")];
+              $reminder_text=$tglReminder->format("d")." ".$bulan_rem." ".$tglReminder->format("Y");
+          ?>
+            <tr>
+              <td><?= htmlspecialchars($row['nama_anggota']) ?></td>
+              <td><?= htmlspecialchars(normalize_phone($row['no_telp'])) ?></td>
+              <td class="text-center"><?= htmlspecialchars($row['nopinjaman']) ?></td>
+              <td><?= date("d-M-Y",strtotime($row['tanggal'])) ?></td>
+              <td class="text-end">Rp <?= number_format($row['plafon'],0,",",".") ?></td>
+              <td class="text-end">Rp <?= number_format($row['angsuran'],0,",",".") ?></td>
+              <td class="text-center"><?= $row['jangkawaktu'] ?> bln</td>
+              <td class="text-center">
+                <input type="number" class="form-control form-control-sm text-center" 
+                       id="angsuran-<?= $row['id'] ?>" value="<?= $row['rekeningkoran'] ?>" 
+                       min="0" style="width:70px;">
+              </td>
+              <td class="text-center fw-bold"><?= $jt->format("d-M-Y") ?></td>
+              <td class="text-center"><span class="badge bg-info badge-day"><?= $hariTempoIndo ?></span></td>
+              <td class="text-center"><?= $reminder_text ?></td>
+              <td class="text-center">
+                <button class="btn-save btn-sm btn-simpan" data-id="<?= $row['id'] ?>">💾 Simpan</button>
+              </td>
             </tr>
           <?php endwhile; else: ?>
-            <tr><td colspan="13" class="text-center">Tidak ada data</td></tr>
+            <tr><td colspan="12" class="text-center py-4">Tidak ada data</td></tr>
           <?php endif; ?>
           </tbody>
         </table>
       </div>
     </div>
 
-    <!-- TAB 2: UPDATE ANGSURAN -->
-    <div class="tab-pane fade <?= ($activeTab=='update') ? 'show active' : '' ?>" id="update">
-      <h4 class="mb-3">📋 Update Angsuran ke-</h4>
-      <?php
-      $res2 = $conn->query($sql);
-      ?>
-      <table class="table table-striped table-hover align-middle">
-        <thead class="text-center">
-          <tr><th>No</th><th>Nama</th><th>No. HP</th><th>No. Pinjaman</th><th>Tanggal</th><th>Plafon</th><th>Angsuran</th><th>Jangka</th><th>Ke-</th><th>Tempo</th><th>Hari</th><th>Reminder -3</th><th>Aksi</th></tr>
-        </thead>
-        <tbody>
-        <?php $no=1; if ($res2 && $res2->num_rows>0): while($r=$res2->fetch_assoc()):
-            $jt=hitungJatuhTempo($r['tanggal'],$r['rekeningkoran']);
-            $hariTempo=["Sunday"=>"Minggu","Monday"=>"Senin","Tuesday"=>"Selasa","Wednesday"=>"Rabu","Thursday"=>"Kamis","Friday"=>"Jumat","Saturday"=>"Sabtu"];
-            $hariTempoIndo=$hariTempo[$jt->format('l')]??$jt->format('l');
-            $tglReminder=clone $jt; $tglReminder->modify('-3 day');
-        ?>
-          <tr>
-            <td><?= $no++ ?></td>
-            <td><?= htmlspecialchars($r['nama_anggota']) ?></td>
-            <td><?= normalize_phone($r['no_telp']) ?></td>
-            <td><?= htmlspecialchars($r['nopinjaman']) ?></td>
-            <td><?= date('d-M-Y', strtotime($r['tanggal'])) ?></td>
-            <td class="text-end">Rp <?= number_format($r['plafon'],0,',','.') ?></td>
-            <td class="text-end">Rp <?= number_format($r['angsuran'],0,',','.') ?></td>
-            <td class="text-center"><?= $r['jangkawaktu'] ?> bln</td>
-            <td><input type="number" id="angsuran-<?= $r['id'] ?>" class="form-control form-control-sm text-center" value="<?= $r['rekeningkoran'] ?>" min="0" style="width:70px"></td>
-            <td><?= $jt->format('d-M-Y') ?></td>
-            <td class="text-center"><?= $hariTempoIndo ?></td>
-            <td><?= $tglReminder->format('d-m-Y') ?></td>
-            <td><button class="btn-save btn-sm btn-simpan" data-id="<?= $r['id'] ?>">💾 Simpan</button></td>
-          </tr>
-        <?php endwhile; else: ?>
-          <tr><td colspan="12" class="text-center">Tidak ada data</td></tr>
-        <?php endif; ?>
-        </tbody>
-      </table>
-    </div>
-
     <!-- TAB 3: REKAP ANGSURAN -->
-    <div class="tab-pane fade <?= (isset($_GET['tab']) && $_GET['tab'] == 'rekap') ? 'show active' : '' ?>" id="rekap">
+    <div class="tab-pane fade <?= ($activeTab=='rekap') ? 'show active' : '' ?>" id="rekap">
       <h4 class="mb-3">📊 Rekap Pembayaran Angsuran</h4>
       <form method="GET" class="mb-2">
         <input type="hidden" name="tab" value="rekap">
@@ -229,12 +279,8 @@ main.container-fluid {
         <table class="table table-bordered table-striped">
           <thead>
             <tr>
-              <th>No</th>
-              <th>Tanggal</th>
-              <th>No. Pinjaman</th>
-              <th>Nama Anggota</th>
-              <th>Jumlah Pembayaran</th>
-              <th>Total Angsuran (Rp)</th>
+              <th>No</th><th>Tanggal</th><th>No. Pinjaman</th><th>Nama Anggota</th>
+              <th>Jumlah Pembayaran</th><th>Total Angsuran (Rp)</th>
             </tr>
           </thead>
           <tbody>
@@ -299,35 +345,20 @@ $(document).on('click','.btn-simpan',function(){
     else alert('❌ Gagal!');
   });
 });
-
-// --- Tab persistence (menyimpan tombol yang diklik dan restore saat reload) ---
+// --- Tab persistence ---
 document.querySelectorAll('button[data-bs-toggle="tab"]').forEach(tab => {
-  tab.addEventListener('shown.bs.tab', function (e) {
-    // simpan selector target (mis. "#rekap")
+  tab.addEventListener('shown.bs.tab', e => {
     localStorage.setItem('activeTab', e.target.getAttribute('data-bs-target'));
   });
 });
-
-document.addEventListener('DOMContentLoaded', function () {
-  // prioritas: parameter URL ?tab=... lalu localStorage
-  const urlParams = new URLSearchParams(window.location.search);
-  const tabParam = urlParams.get('tab'); // mis. 'rekap'
-  let activeTarget = null;
-
-  if (tabParam) {
-    // kalau ada param tab di URL, bangun selector "#rekap"
-    activeTarget = '#' + tabParam;
-  } else {
-    // fallback ke localStorage (disimpan sebagai "#rekap")
-    activeTarget = localStorage.getItem('activeTab');
-  }
-
-  if (activeTarget) {
-    // cari tombol yang memiliki data-bs-target sama
-    const tabTrigger = document.querySelector(`button[data-bs-toggle="tab"][data-bs-target="${activeTarget}"]`);
-    if (tabTrigger) {
-      const tab = new bootstrap.Tab(tabTrigger);
-      tab.show();
+document.addEventListener('DOMContentLoaded', ()=>{
+  const urlParams=new URLSearchParams(window.location.search);
+  const tabParam=urlParams.get('tab');
+  let activeTarget=tabParam ? '#'+tabParam : localStorage.getItem('activeTab');
+  if(activeTarget){
+    const tabTrigger=document.querySelector(`button[data-bs-toggle="tab"][data-bs-target="${activeTarget}"]`);
+    if(tabTrigger){
+      const tab=new bootstrap.Tab(tabTrigger); tab.show();
     }
   }
 });
